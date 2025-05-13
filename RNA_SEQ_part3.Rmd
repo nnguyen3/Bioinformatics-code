@@ -1,0 +1,193 @@
+---
+title: "RNA_SEQ_part3"
+author: "Nhi Nguyen"
+date: "2025-04-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+```{R}
+install.packages("Seurat")
+# Load the library
+library(Seurat)
+library(dplyr)
+library(patchwork)
+```
+```{R}
+# Load the PBMC dataset
+pbmc.data <- Read10X(data.dir = "~/Desktop/Biol 668/filtered_gene_bc_matrices/hg19/")
+# Initialize the Seurat object with the raw (non-normalized data).
+pbmc <- CreateSeuratObject(counts = pbmc.data, project = "pbmc3k", min.cells = 3, min.features = 200)
+pbmc
+# create obj call pbmc
+# keep genes found in at least 3 cells
+# keep cell that express at least 200 genes
+
+# Lets examine a few genes in the first thirty cells
+pbmc.data[c("CD3D", "TCL1A", "MS4A1"), 1:30]
+
+# check how much memory my dataset useincluding sense size and sparse size (skip all the 0s)
+dense.size <- object.size(as.matrix(pbmc.data))
+dense.size
+
+sparse.size <- object.size(pbmc.data)
+sparse.size
+
+dense.size/sparse.size
+# the ratio show how much memory i save by using the sparse format
+
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+# calc percent of transcripts that come from mitochondrial gene
+# high mitochondrial % means low quality/ dying cells
+
+# Visualize QC metrics as a violin plot
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+# nFeature_RNA is how many genes per cell
+# nCount_RNA is how many total transcripts per cell
+# percent.mt is % of mitochondrial gene
+
+# the plot is violin plots for 3 quality control (QC) metric in PBMC .
+# filter cell with 200 < nFeature_ RNA < 2500
+# remove cell with percent.mt > 5
+# middle is show how much total RNA was captured
+```
+```{R}
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+# plot 1 is total RNA vs percent mito, high mito = bad cell
+# plot 2 is total RNA count vs # of gene , help to see doublet
+# these will help to decide what to fiter in the next step
+pbmc <- subset(pbmc, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+# this to remove cell with too few or too many gene
+# also remove cell with too much mito rna = dying
+```
+```{R}
+# normalizing the data
+pbmc <- NormalizeData(pbmc, normalization.method = "LogNormalize", scale.factor = 10000)
+pbmc <- NormalizeData(pbmc)
+pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = 2000)
+# compare gene expression value across cell
+# then find variable hen , pick 2000 most variable gene that most likely to separate different cell
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(pbmc), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(pbmc)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+
+# scale the data
+all.genes <- rownames(pbmc)
+pbmc <- ScaleData(pbmc, features = all.genes)
+
+# remove the effect of mito gene expression from data so it doesnt affect downstream clustering
+pbmc <- ScaleData(pbmc, vars.to.regress = "percent.mt")
+```
+```{R}
+# run pca on most 2000 variable gene
+pbmc <- RunPCA(pbmc, features = VariableFeatures(object = pbmc))
+# Examine and visualize PCA results a few different ways
+print(pbmc[["pca"]], dims = 1:5, nfeatures = 5)
+# visualize pca gene loading, see which gene have highest influence on pc1 and pc2
+VizDimLoadings(pbmc, dims = 1:2, reduction = "pca")
+
+# pca plot of cell 
+DimPlot(pbmc, reduction = "pca") + NoLegend()
+DimHeatmap(pbmc, dims = 1, cells = 500, balanced = TRUE)
+# pca heatmap, show how cell vary in top gene contributing to pc1
+DimHeatmap(pbmc, dims = 1:15, cells = 500, balanced = TRUE) # do it for first 15 pcs
+
+ElbowPlot(pbmc)
+```
+```{R}
+# clustering cells
+pbmc <- FindNeighbors(pbmc, dims = 1:10) 
+# calc how similar cell are base on first 10 pcs
+pbmc <- FindClusters(pbmc, resolution = 0.5)
+# then group the cells into cluster
+
+# Look at cluster IDs of the first 5 cells
+head(Idents(pbmc), 5)
+
+# umap creates 2d plot - each plot is a cell
+# cell with sim ilar expresision pattern cluster together
+# each color is different cluster
+pbmc <- RunUMAP(pbmc, dims = 1:10)
+# individual clusters
+DimPlot(pbmc, reduction = "umap")
+
+saveRDS(pbmc, file = "~/Desktop/Biol 668/pbmc_tutorial.rds")
+
+# find all markers of cluster 
+cluster2.markers <- FindMarkers(pbmc, ident.1 = 2)
+head(cluster2.markers, n = 5)
+
+# find all markers distinguishing cluster 5 from clusters 0 and 3
+cluster5.markers <- FindMarkers(pbmc, ident.1 = 5, ident.2 = c(0, 3))
+head(cluster5.markers, n = 5)
+
+pbmc.markers <- FindAllMarkers(pbmc, only.pos = TRUE)
+pbmc.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1)
+
+cluster0.markers <- FindMarkers(pbmc, ident.1 = 0, logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+
+VlnPlot(pbmc, features = c("MS4A1", "CD79A"))
+
+# you can plot raw counts as well
+VlnPlot(pbmc, features = c("NKG7", "PF4"), slot = "counts", log = TRUE)
+
+# to see where specific gene expressed on the umap
+FeaturePlot(pbmc, features = c("MS4A1", "GNLY", "CD3E", "CD14", "FCER1A", "FCGR3A", "LYZ", "PPBP",
+    "CD8A"))
+
+# heatmap of top market per cluster
+# create heatmap of the to 10 marker genes per cluster
+pbmc.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10) %>%
+    ungroup() -> top10
+DoHeatmap(pbmc, features = top10$gene) + NoLegend()
+```
+```{R}
+# rename the cluster with cell type label
+new.cluster.ids <- c("Naive CD4 T", "CD14+ Mono", "Memory CD4 T", "B", "CD8 T", "FCGR3A+ Mono",
+    "NK", "DC", "Platelet")
+names(new.cluster.ids) <- levels(pbmc)
+pbmc <- RenameIdents(pbmc, new.cluster.ids)
+# umap, dot= cell, color = cell type
+DimPlot(pbmc, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+
+
+library(ggplot2)
+plot <- DimPlot(pbmc, reduction = "umap", label = TRUE, label.size = 4.5) + xlab("UMAP 1") + ylab("UMAP 2") +
+    theme(axis.title = element_text(size = 18), legend.text = element_text(size = 18)) + guides(colour = guide_legend(override.aes = list(size = 10)))
+ggsave(filename = "../output/images/pbmc3k_umap.jpg", height = 7, width = 12, plot = plot, quality = 50)
+saveRDS(pbmc, file = "~/Desktop/Biol 668/pbmc3k_final.rds") # save the image
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

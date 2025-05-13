@@ -1,0 +1,319 @@
+---
+title: "RNA_SEQ_LAB"
+author: "Nhi Nguyen"
+date: "2025-04-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+```{R}
+# using `limma`, `edgeR`, and `Glimma` packages to do RNA-Seq analysis. These packages work together to preprocess, normalize, model, and visualize count-based gene expression data.
+
+# set up
+
+install.packages("BiocManager")
+install.packages("R.utils")
+BiocManager::install("limma")
+BiocManager::install("edgeR")
+BiocManager::install("Glimma")
+BiocManager::install("Mus.musculus")
+BiocManager::install("RNAseq123")
+library(limma)
+library(Glimma)
+library(edgeR)
+library(Mus.musculus)
+```
+
+```{R}
+# downloading and reading the data
+# download compressed archirve file .tar and untar it or extract the files
+url <- "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE63310&format=file"
+utils::download.file(url, destfile="GSE63310_RAW.tar", mode="wb") 
+utils::untar("GSE63310_RAW.tar", exdir = ".")
+files <- c("GSM1545535_10_6_5_11.txt", "GSM1545536_9_6_5_11.txt", "GSM1545538_purep53.txt",
+  "GSM1545539_JMS8-2.txt", "GSM1545540_JMS8-3.txt", "GSM1545541_JMS8-4.txt",
+  "GSM1545542_JMS8-5.txt", "GSM1545544_JMS9-P7c.txt", "GSM1545545_JMS9-P8c.txt")
+for(i in paste(files, ".gz", sep=""))
+  R.utils::gunzip(i, overwrite=TRUE)
+# to unzipping the files (.gz)
+
+files <- c("GSM1545535_10_6_5_11.txt", "GSM1545536_9_6_5_11.txt", 
+   "GSM1545538_purep53.txt", "GSM1545539_JMS8-2.txt", 
+   "GSM1545540_JMS8-3.txt", "GSM1545541_JMS8-4.txt", 
+   "GSM1545542_JMS8-5.txt", "GSM1545544_JMS9-P7c.txt", 
+   "GSM1545545_JMS9-P8c.txt")
+read.delim(files[1], nrow=5)
+x <- readDGE(files, columns=c(1,3))
+# read all the counts with edgeR
+# readDGE is function from edgeR that creates a special obj (DGElist) that store : raw count, sample info and gene info
+class(x)
+dim(x)
+```
+```{R}
+# organising sample metadata
+samplenames <- substring(colnames(x), 12, nchar(colnames(x)))
+samplenames
+colnames(x) <- samplenames
+# only want simpler label "10_6_5_11,...", so trimming the extra part
+
+# assigning group info, labeling each sample with its cell type group
+group <- as.factor(c("LP", "ML", "Basal", "Basal", "ML", "LP", 
+                     "Basal", "ML", "LP"))
+x$samples$group <- group
+
+# assigning batch info (lane)
+# samples were sequence in 3 different lanesm batch effect an affect gene expression so it is better to include this info in the design matric
+lane <- as.factor(rep(c("L004","L006","L008"), c(3,4,2)))
+x$samples$lane <- lane
+x$samples
+
+# organising gene annotations
+geneid <- rownames(x)
+genes <- select(Mus.musculus, keys=geneid, columns=c("SYMBOL", "TXCHROM"), 
+                keytype="ENTREZID")
+head(genes)
+
+#removing duplicate annotation to avoid confusion and align gene info with my dtaa
+genes <- genes[!duplicated(genes$ENTREZID),]
+x$genes <- genes
+x
+
+```
+```{R}
+#data pre- processing
+# calc counts per million
+# convert rae count into normalized expression values, and scaled them
+cpm <- cpm(x)
+lcpm <- cpm(x, log=TRUE) # lcpm is log2 transformed
+
+#check fro library size
+L <- mean(x$samples$lib.size) * 1e-6  # averg L 
+M <- median(x$samples$lib.size) * 1e-6 # median M in million reads
+# used to estimate the minimum expression cutoff for filtering
+c(L, M)
+summary(lcpm) # summary log CPM value
+
+# remove low expressed genes
+
+# check for how many genes with 0 counts ( unexpressed) in all samples
+table(rowSums(x$counts==0)==9)
+
+#filter lowly expressed genes
+# keep genes that have enough expression in enough samples, base on group size
+keep.exprs <- filterByExpr(x, group=group)
+x <- x[keep.exprs,, keep.lib.sizes=FALSE]
+dim(x)
+
+# set cutoff for log-cpm density plot
+lcpm.cutoff <- log2(10/M + 2/L)
+library(RColorBrewer)
+nsamples <- ncol(x)
+col <- brewer.pal(nsamples, "Paired")
+par(mfrow=c(1,2))
+
+# density plot before and afteer filtering
+# each curve = expression distribution in one sample
+# show many genes wirh low expression , peak in the very left
+plot(density(lcpm[,1]), col=col[1], lwd=2, ylim=c(0,0.26), las=2, main="", xlab="")
+title(main="A. Raw data", xlab="Log-cpm")
+abline(v=lcpm.cutoff, lty=3)
+for (i in 2:nsamples){
+den <- density(lcpm[,i])
+lines(den$x, den$y, col=col[i], lwd=2)
+}
+legend("topright", samplenames, text.col=col, bty="n")
+# filtered data
+lcpm <- cpm(x, log=TRUE) # recalc log cpm on filtered data
+# curve look cleaner with less low expression gene remain
+# looks better
+plot(density(lcpm[,1]), col=col[1], lwd=2, ylim=c(0,0.26), las=2, main="", xlab="")
+title(main="B. Filtered data", xlab="Log-cpm")
+abline(v=lcpm.cutoff, lty=3)
+for (i in 2:nsamples){
+den <- density(lcpm[,i])
+lines(den$x, den$y, col=col[i], lwd=2)
+}
+legend("topright", samplenames, text.col=col, bty="n")
+```
+```{R}
+# demonstrating TMM normalization
+#Normalising gene expression distributions
+# apply tmm
+# calc scaling factor that correct for compositional difference 
+# most value will close to 1 if sample are well balanced
+x <- calcNormFactors(x, method = "TMM")
+x$samples$norm.factors
+
+# create fake "broken" dataset
+# manually breaking the balance
+# shrinking sample 1 count by 95% and multiplying sample 2 count by 5x
+# bad normalization
+x2 <- x
+x2$samples$norm.factors <- 1
+x2$counts[,1] <- ceiling(x2$counts[,1]*0.05)
+x2$counts[,2] <- x2$counts[,2]*5
+# plot this unnormalized data
+par(mfrow=c(1,2))
+lcpm <- cpm(x2, log=TRUE)
+boxplot(lcpm, las=2, col=col, main="")
+title(main="A. Example: Unnormalised data",ylab="Log-cpm")
+# light blue looks very low , and dark blue is higher than others
+# expression level are not in same scale = bad
+
+# normalized data
+x2 <- calcNormFactors(x2)  
+x2$samples$norm.factors
+lcpm <- cpm(x2, log=TRUE)
+boxplot(lcpm, las=2, col=col, main="")
+title(main="B. Example: Normalised data",ylab="Log-cpm")
+# all sample are on same scale level
+# outliers are fixed 
+```
+```{R}
+# multi dimensional scaling
+# to see how similar/ difference the samples are based on gene expression without using any group labels in the calc
+# unsupervised clustering of samples
+
+# recalc logcpm
+lcpm <- cpm(x, log=TRUE)
+par(mfrow=c(1,2))
+# color by group and lane
+col.group <- group
+levels(col.group) <-  brewer.pal(nlevels(col.group), "Set1")
+col.group <- as.character(col.group)
+col.lane <- lane
+levels(col.lane) <-  brewer.pal(nlevels(col.lane), "Set2")
+col.lane <- as.character(col.lane)
+plotMDS(lcpm, labels=group, col=col.group)
+title(main="A. Sample groups")
+# show how many samples cluster based on cell type
+# Basal, LP and ML group together 
+# they all seperate
+
+# plot by sequencing lane 
+plotMDS(lcpm, labels=lane, col=col.lane, dim=c(3,4))
+title(main="B. Sequencing lanes")
+
+# interact MDS plot with glimma
+glMDSPlot(lcpm, labels=paste(group, lane, sep="_"), 
+          groups=x$samples[,c(2,5)], launch=FALSE)
+
+```
+```{R}
+# creating a design matrix and contrast
+# modeling data with no intercept (~0), each group has its own coefficient
+design <- model.matrix(~0+group+lane)
+colnames(design) <- gsub("group", "", colnames(design))
+design
+
+contr.matrix <- makeContrasts(
+   BasalvsLP = Basal-LP, 
+   BasalvsML = Basal - ML, 
+   LPvsML = LP - ML, 
+   levels = colnames(design))
+contr.matrix
+# define 3 pairwise comparision
+
+# remove heteroscedascity from count data
+par(mfrow=c(1,2))
+
+# voom transformation and linear modeling
+v <- voom(x, design, plot=TRUE) # to medel mean - variance relationship
+v
+
+vfit <- lmFit(v, design) # fit the linear model
+vfit <- contrasts.fit(vfit, contrasts=contr.matrix) # comparision
+efit <- eBayes(vfit) # stabiolizes variance estimate
+# mean variance plot
+plotSA(efit, main="Final model: Mean-variance trend")
+
+# examining the number of DE genes
+# count significant genes
+# show how many gene are signific 
+summary(decideTests(efit))
+tfit <- treat(vfit, lfc=1) 
+dt <- decideTests(tfit)
+summary(dt)  #log fold change threshold, keeps only gene with log2 fold change >= 1
+
+# find gens that shares across comparision
+de.common <- which(dt[,1]!=0 & dt[,2]!=0)
+length(de.common)
+
+head(tfit$genes$SYMBOL[de.common], n=20)
+vennDiagram(dt[,1:2], circle.col=c("turquoise", "salmon")) # show overlap between sig gene in 2 contrast
+
+# examining individual DE genes from top to bottom
+basal.vs.lp <- topTreat(tfit, coef=1, n=Inf)
+basal.vs.ml <- topTreat(tfit, coef=2, n=Inf)
+head(basal.vs.lp)
+
+head(basal.vs.ml)
+
+plotMD(tfit, column=1, status=dt[,1], main=colnames(tfit)[1], 
+       xlim=c(-8,13))
+glMDPlot(tfit, coef=1, status=dt, main=colnames(tfit)[1],
+         side.main="ENTREZID", counts=lcpm, groups=group, launch=FALSE)
+
+install.packages("gplots")
+
+library(gplots)
+# heatmap of top genes
+# show expression pattern o the top 100 genes in heatmap
+basal.vs.lp.topgenes <- basal.vs.lp$ENTREZID[1:100]
+i <- which(v$genes$ENTREZID %in% basal.vs.lp.topgenes)
+mycol <- colorpanel(1000,"blue","white","red")
+heatmap.2(lcpm[i,], scale="row",
+   labRow=v$genes$SYMBOL[i], labCol=group, 
+   col=mycol, trace="none", density.info="none", 
+   margin=c(8,6), lhei=c(2,10), dendrogram="column")
+# too large
+```
+```{R}
+# gene set testing with camera
+# load gene set collection for mouse 
+load(system.file("extdata", "mouse_c2_v5p1.rda", package = "RNAseq123"))
+idx <- ids2indices(Mm.c2,id=rownames(v)) # create gene set index list
+cam.BasalvsLP <- camera(v,idx,design,contrast=contr.matrix[,1])
+head(cam.BasalvsLP,5)
+# run camera for each comparision
+# this test whether predefined gene set are enriched im the differential expression result
+# basal vs LP, basal vs ml, ml vs lp
+# return p-value, direction
+cam.BasalvsML <- camera(v,idx,design,contrast=contr.matrix[,2])
+head(cam.BasalvsML,5)
+
+cam.LPvsML <- camera(v,idx,design,contrast=contr.matrix[,3])
+head(cam.LPvsML,5)
+# visualize with barcode plot
+barcodeplot(efit$t[,3], index=idx$LIM_MAMMARY_LUMINAL_MATURE_UP, 
+            index2=idx$LIM_MAMMARY_LUMINAL_MATURE_DN, main="LPvsML")
+# red bars on right (LP > ML)
+# blue bar in left (ML < LP)
+
+```
+```{R}
+sessionInfo()
+
+```
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

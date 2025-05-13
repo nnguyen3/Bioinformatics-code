@@ -1,0 +1,280 @@
+---
+title: "RNA-Seq DESeq2 Analysis: Mutant vs Wild Type"
+
+author: "Nhi Nguyen"
+date: "2025-04-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+```{R}
+# Load libraries
+library(DESeq2)
+library(tidyverse)
+library(ggplot2)
+library(pheatmap)
+library(ggplot2)
+```
+
+
+## Load the data
+```{R}
+countdata <- read.csv("rna_counts_data.csv", row.names = 1)
+coldata <- read.csv("rna_map_update copy.csv")
+# data inspection
+# in rna_map, sample name is in column
+# but in rna_count, the "sample name like rna" is in row
+# count data:
+# row = genes (TRNP,CYTB)
+# colum = samples , (HT1080IDH1.R132H.30,... )
+
+# map file:
+# tumor type (HT1080, U87MG)
+# sample group : R123H, WT
+# sample number = 30,26,...
+# condition : mutation or wild type
+
+#I created a new column to match sample names in the count file, combining tumor type, mutation, and replicate ID into a formatted name like: U87MGIDH1.R132H.24
+# need to match sample name to the column names in rna count
+# create new metadata column that matches the count's column names
+# run DESeq2 to compare muttion and wild type
+
+```
+
+## Create a DESeqDataSet
+
+```{R}
+# the number of column in countdata don't match with the number of rows in coldata
+# I noticed that the "U87MGIDH1.WT.26" is in the count data but is not listed in the metadata (rna_map_update copy.csv), while "U87MGIDH1.WT.29" is present in the metadata but not in the count data. To make sure the consistency between the count matrix and sample information, I take out the "U87MGIDH1.WT.26" from the analysis.
+# Step 1: Remove the "Length" column (already correct)
+countdata <- countdata[, colnames(countdata) != "Length"]
+
+# Step 2: Remove sample that is NOT in map (U87MGIDH1.WT.26)
+countdata <- countdata[, colnames(countdata) != "U87MGIDH1.WT.26"]
+
+# Step 3: Get updated sample names 
+SampleName <- colnames(countdata)
+SampleName
+
+# Step 4: Assign conditions to match the 21 samples
+Condition <- c(
+  # HT1080
+  "Mutation", "Mutation", "Mutation",       # R132H
+  "Mutation", "Mutation", "Mutation",       # R132Q
+  "Mutation", "Mutation",                   # R132Q
+  "Wild Type", "Wild Type",                 # WT
+
+  # U87MG
+  "Mutation", "Mutation", "Mutation", "Mutation",       # R132H
+  "Mutation", "Mutation", "Mutation", "Mutation", "Mutation", # R132Q
+  "Wild Type", "Wild Type"                 # WT (21, 7)
+)
+# missing U87MGIDH1-WT-26 in rna_map_update!!!!
+# missing U87MG.WT.29 in count data!!!! didn't put it in condition list
+# remove U87MGIDH1-WT-26 from my analysis
+
+#Step 5: create metdata
+meta_data <- data.frame(SampleName, Condition)
+meta_data <- meta_data %>% remove_rownames() %>% column_to_rownames(var = "SampleName")
+
+# Step 6: Final check
+all(colnames(countdata) == rownames(meta_data))
+# Finally return TRUE
+```
+
+## Create DESeq2 dataset
+
+```{R}
+# Create DESeq2 dataset object
+dds <- DESeqDataSetFromMatrix(countData = countdata,
+                              colData = meta_data,
+                              design = ~ Condition)
+# see obj element
+dds
+# dimension is 59251 x 21, 59251 genes and 21 samples
+```
+
+## Pre-filter low expressed genes
+
+```{R}
+# filter any counts less than 10
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+dds
+# now we end up have 32971 genes left
+```
+## Set reference Factor
+```{R}
+# set the reference to be the control
+dds$Condition <- relevel(factor(dds$Condition), ref = "Wild Type")
+# to answer question asking what changes in gene expression happen when we go from Wild Type to Mutation?
+```
+## Getting normalized count
+```{R}
+# get normalized counts
+dds <- estimateSizeFactors(dds)
+normalized_counts <- counts(dds, normalized = TRUE)
+```
+## run differential expression
+```{R}
+dds <- DESeq(dds)
+res <- results(dds)
+res
+summary(res)
+sum(res$padj < 0.1, na.rm=TRUE) # exact number of adj p-value that are , 0.01 =29
+
+res05 <- results(dds, alpha=0.05)
+summary(res05)
+sum(res$padj < 0.05, na.rm=TRUE) # number of genes with adj p-value < 0.05
+```
+## convert result data to basic dataframje
+```{R}
+data <- data.frame(res)
+head(data)
+
+```
+## pca plot
+```{R}
+# transform my data
+rld <- rlog(dds)
+# plot PCA grouped by condition
+plotPCA(rld,intgroup = "Condition" )
+# PC1 is 97% variance, PC2 is 1% , so PC1 explains 97% of the total variation in this dataset
+
+```
+
+
+## Get and save results
+
+```{r get-results}
+res <- results(dds)
+head(res)
+# show log2fold change
+# show how much the gene changes between mutation and wild type
+# positive is higher in mutation, and negative is higher in wild type
+# gene with padj < 0.05 are significant
+# CYTB has p-value = 0.005 < 0.05 which consider significant but padj 0.673 which is now not signicant > 0.05 means that not sig differentially expressed.
+
+```
+
+
+## Volcano Plot
+
+```{R}
+# classify gene by expression change
+data <- data %>%
+  mutate(
+  Expression = case_when(log2FoldChange >= log(1) & padj <= 0.05 ~ "Up-regulated",
+  log2FoldChange <= -log(1) & padj <= 0.05 ~ "Down-regulated",
+  TRUE ~ "Unchanged")
+  )
+# add new colum up regulated if lfc >= 0 and padj <= 0.05
+# add down regulated if lfc <=0, and padj <= 0.05
+# unchange for everything else
+head(data)
+
+top <- 10
+# select 10 most significant upregulated and most 10 downregulated gene , based on lowest padj and strongest fc
+top_genes <- bind_rows(
+  data %>%
+  filter(Expression == 'Up-regulated') %>%
+  arrange(padj, desc(abs(log2FoldChange))) %>%
+  head(top),
+  data %>%
+  filter(Expression == 'Down-regulated') %>%
+  arrange(padj, desc(abs(log2FoldChange))) %>%
+  head(top)
+  )
+# create a datframe just holding the top 10 genes
+Top_Hits = head(arrange(data,pvalue),10)
+Top_Hits
+# give 10 genes with lowest raw p-value
+
+# basic volcano plot
+data$label = if_else(rownames(data) %in% rownames(Top_Hits), rownames(data), "")
+# label only top 10
+
+# basic plot
+# plot lfc and sif, no color or label
+p1 <- ggplot(data, aes(log2FoldChange, -log(pvalue,10))) + # -log10 conversion
+geom_point( size = 2/5) +
+xlab(expression("log"[2]*"FC")) +
+ylab(expression("-log"[10]*"P-Value")) +
+xlim(-4.5, 4.5)
+p1
+
+# volcano plot with red significant genes
+# red is up or down, black is unchange 
+# basic plot with line + red for p < 0.05
+p2 <- ggplot(data, aes(log2FoldChange, -log(pvalue,10))) + # -log10 conversion
+geom_point(aes(color = Expression), size = 2/5) +
+#geom_hline(yintercept= -log10(0.05), linetype="dashed", linewidth = .4) +
+xlab(expression("log"[2]*"FC")) +
+ylab(expression("-log"[10]*"P-Value")) +
+scale_color_manual(values = c("firebrick3", "black", "firebrick3")) +
+xlim(-4.5, 4.5) +
+theme(legend.position = "none")
+p2
+
+# with labels for top 10 sig overall
+# add text label for top genes
+library(ggrepel)
+p3 <- ggplot(data, aes(log2FoldChange, -log(pvalue,10))) + # -log10 conversion
+geom_point(aes(color = Expression), size = 2/5) +
+# geom_hline(yintercept=-log10(0.05), linetype="dashed", linewidth = .4) +
+xlab(expression("log"[2]*"FC")) +
+ylab(expression("-log"[10]*"P-Value")) +
+scale_color_manual(values = c("firebrick3", "black", "firebrick3")) +
+xlim(-4.5, 4.5) +
+theme(legend.position = "none") +
+geom_text_repel(aes(label = label), size = 2.5)
+p3
+
+
+# blue for downregulated, red for upregulated
+# plot with up/down
+p4 <- ggplot(data, aes(log2FoldChange, -log(pvalue,10))) + # -log10 conversion
+geom_point(aes(color = Expression), size = 2/5) +
+#geom_hline(yintercept=-log10(0.05), linetype="dashed", linewidth = .4) +
+xlab(expression("log"[2]*"FC")) +
+ylab(expression("-log"[10]*"P-Value")) +
+scale_color_manual(values = c("dodgerblue3", "black", "firebrick3")) +
+xlim(-4.5, 4.5)
+p4
+
+# up/down regulated genes identified and labels
+p5 <- ggplot(data, aes(log2FoldChange, -log(pvalue,10))) + # -log10 conversion
+geom_point(aes(color = Expression), size = 2/5) +
+# geom_hline(yintercept=-log10(0.05), linetype="dashed", linewidth = .4) +
+xlab(expression("log"[2]*"FC")) +
+ylab(expression("-log"[10]*"P-Value")) +
+scale_color_manual(values = c("dodgerblue3", "black", "firebrick3")) +
+xlim(-4.5, 4.5) +
+geom_text_repel(aes(label = label), size = 2.5)
+p5
+
+```
+
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

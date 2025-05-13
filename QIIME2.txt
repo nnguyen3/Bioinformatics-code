@@ -1,0 +1,87 @@
+Nhi Nguyen
+QIIME 2 - moving picture
+
+code:
+
+# Step 1: Update conda to make sure it's ready
+conda update conda
+
+# Step 2: Download the sample metadata 
+wget -O moving-pictures-sample-metadata.tsv https://data.qiime2.org/2025.4/tutorials/moving-pictures/sample_metadata.tsv
+
+# Step 3: setup file for QIIME2 amplicon 
+wget https://data.qiime2.org/distro/amplicon/qiime2-amplicon-2024.10-py310-osx-conda.yml
+
+# Step 4: Install QIIME2 using the environment file
+conda env create -n qiime2-amplicon-2024.10 --file qiime2-amplicon-2024.10-py310-osx-conda.yml
+
+# Step 5: Turn on QIIME2 
+conda activate qiime2-amplicon-2024.10
+
+# Step 6: Make a folder to keep all the files in one place
+mkdir qiime2-moving-pictures
+cd qiime2-moving-pictures
+
+# Step 7: Download the raw sequencing files
+wget https://data.qiime2.org/2024.10/tutorials/moving-pictures/emp-single-end-sequences/barcodes.fastq.gz
+wget https://data.qiime2.org/2024.10/tutorials/moving-pictures/emp-single-end-sequences/sequences.fastq.gz
+
+# Step 8: Turn the raw files into a QIIME2 file so I can work with them
+qiime tools import --type EMPSingleEndSequences --input-path emp-single-end-sequences --output-path emp-single-end-sequences.qza
+
+# Step 9: Separate sequences by sample using the barcodes
+qiime demux emp-single --i-seqs emp-single-end-sequences.qza --m-barcodes-file moving-pictures-sample-metadata.tsv --m-barcodes-column barcode-sequence --o-per-sample-sequences demux.qza --o-error-correction-details demux-details.qza
+
+# Step 10: Look at quality of sequences
+qiime demux summarize --i-data demux.qza --o-visualization demux.qzv
+
+# Step 11: Clean up and group the sequences using DADA2
+qiime dada2 denoise-single --i-demultiplexed-seqs demux.qza --p-trim-left 0 --p-trunc-len 120 --o-table table.qza --o-representative-sequences rep-seqs.qza --o-denoising-stats stats-dada2.qza
+
+# Step 12: View stats from DADA2
+qiime metadata tabulate --m-input-file stats-dada2.qza --o-visualization stats-dada2.qzv
+
+# Step 13: Check how many reads each sample has
+qiime feature-table summarize --i-table table.qza --o-visualization table.qzv --m-sample-metadata-file moving-pictures-sample-metadata.tsv
+
+# Step 14: Look at the sequences 
+qiime feature-table tabulate-seqs --i-data rep-seqs.qza --o-visualization rep-seqs.qzv
+
+# Step 15: Make a tree 
+qiime phylogeny align-to-tree-mafft-fasttree --i-sequences rep-seqs.qza --o-alignment aligned-rep-seqs.qza --o-masked-alignment masked-aligned-rep-seqs.qza --o-tree unrooted-tree.qza --o-rooted-tree rooted-tree.qza
+
+# Step 16: Run diversity analysis (alpha and beta)
+qiime diversity core-metrics-phylogenetic --i-phylogeny rooted-tree.qza --i-table table.qza --p-sampling-depth 1103 --m-metadata-file moving-pictures-sample-metadata.tsv --output-dir core-metrics-results
+
+# Step 17: Check to see if alpha diversity is different between groups
+qiime diversity alpha-group-significance --i-alpha-diversity core-metrics-results/faith_pd_vector.qza --m-metadata-file moving-pictures-sample-metadata.tsv --o-visualization core-metrics-results/faith-pd-group-significance.qzv
+
+# Step 18: Check if beta diversity is different between body sites
+qiime diversity beta-group-significance --i-distance-matrix core-metrics-results/unweighted_unifrac_distance_matrix.qza --m-metadata-file moving-pictures-sample-metadata.tsv --m-metadata-column body-site --o-visualization core-metrics-results/unweighted-unifrac-body-site-significance.qzv
+
+# Step 19: Rarefaction curve to see if sampling was deep enough
+qiime diversity alpha-rarefaction --i-table table.qza --i-phylogeny rooted-tree.qza --m-metadata-file moving-pictures-sample-metadata.tsv --p-max-depth 4000 --o-visualization alpha-rarefaction.qzv
+
+# Step 20: Get the classifier we’ll use for taxonomy
+wget https://data.qiime2.org/2024.10/common/gg-13-8-99-515-806-nb-classifier.qza
+
+# Step 21: Classify sequences into taxa (e.g. genus, family)
+qiime feature-classifier classify-sklearn --i-classifier gg-13-8-99-515-806-nb-classifier.qza --i-reads rep-seqs.qza --o-classification taxonomy.qza
+
+# Step 22: View the taxonomy assignments
+qiime metadata tabulate --m-input-file taxonomy.qza --o-visualization taxonomy.qzv
+
+# Step 23: Make a barplot showing which taxa are found where
+qiime taxa barplot --i-table table.qza --i-taxonomy taxonomy.qza --m-metadata-file moving-pictures-sample-metadata.tsv --o-visualization taxa-bar-plots.qzv
+
+# Step 24: Keep only gut samples for differential abundance
+qiime feature-table filter-samples --i-table table.qza --m-metadata-file moving-pictures-sample-metadata.tsv --p-where "[body-site]='gut'" --o-filtered-table gut-table.qza
+
+# Step 25: Collapse the features to genus level
+qiime taxa collapse --i-table gut-table.qza --i-taxonomy taxonomy.qza --p-level 6 --o-collapsed-table gut-table-l6.qza
+
+# Step 26: Run ANCOM-BC to find differentially abundant genera
+qiime composition ancombc --i-table gut-table-l6.qza --m-metadata-file moving-pictures-sample-metadata.tsv --p-formula 'subject' --o-differentials l6-ancombc-subject.qza
+
+# Step 27: Visualize those genera in a barplot
+qiime composition da-barplot --i-data l6-ancombc-subject.qza --p-significance-threshold 0.001 --p-level-delimiter ';' --o-visualization l6-da-barplot-subject.qzv
