@@ -7,14 +7,14 @@ This repository contains Rmds, docs bash scipts create for BIOL 668. Practice wi
 # Folder Descriptions
 
 # AlgsAndGenomes/
-- quality filtering for a metagenomic dataset.
+- Quality filtering for a metagenomic dataset.
 - Used `fastp` to clean and trim FASTQ 
 - Generated quality reports in HTML/JSON and assessed GC content and k-mer frequencies.
 - Attempted to classify sequences 
 - Explored data stability based on GC content and quality metrics.
 
 # QIIME2/
-- microbiome diversity and taxonomy workflow using QIIME2.
+- Microbiome diversity and taxonomy workflow using QIIME2.
 - Imported and demultiplexed sequencing data 
 - Denoised sequences with DADA2 
 - Performed alpha and beta diversity analysis (Faith PD, Bray Curtis, UniFrac).
@@ -24,7 +24,7 @@ This repository contains Rmds, docs bash scipts create for BIOL 668. Practice wi
 
 # RNA_SEQ_LAB/
 - Rmd files for RNA-seq differential expression analysis.
-- read alignment and count summarization 
+- Read alignment and count summarization 
 - Used DESeq2 in R to compare gene expression between mutant and wild type samples.
 - Included exploratory data analysis and visualizations.
 ---
