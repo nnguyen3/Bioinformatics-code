@@ -1,0 +1,46 @@
+
+For the following exercises, make a single pdf with screenshots showing the
+installation commands, the execution commands, and some of the output.
+For each part, explain what the code or output means.
+
+Process fastq files:
+
+1) Use fastp to process paired-end reads.
+Check out the readme for installation and running instructions.
+
+https://github.com/OpenGene/fastp#get-fastp
+
+The paired-end fastq file. The R indicates direction. R1 is Forward, R2 is Reverse.
+Here is the reverse read (the R1 was corrupted). The QIIME2 website has more of these files.
+They can also be downloaded from the European Nucleotide Archive and NCBI:
+
+insub732_2_R2.fastp.fastq.gz
+
+2) Use Kaiju to analyze a metagenomic dataset with viruses.
+
+Try installing the program or, in desperation, you can use the web server.
+http://kaiju.binf.ku.dk/
+
+Use the viruses database.
+Installation and usage instructions:
+https://github.com/bioinformatics-centre/kaiju/blob/master/README.md
+
+Test files:
+reads_1.fq
+reads_2.fq
+
+3) If you want to extend yourself, try a genome assembly. 
+
+Use the SPAdes (St. Petersburg genome assembler) to assemble a virus genome.
+Installation instructions:
+http://cab.spbu.ru/files/release3.14.0/manual.html#sec1
+
+The file to assemble:
+SP1.fq
+
+
+https://www.hadriengourle.com/tutorials/meta_assembly/
+
+https://www.hadriengourle.com/tutorials/meta_assembly/#getting-the-data
+
+https://anaconda.org/bioconda/metabat2
